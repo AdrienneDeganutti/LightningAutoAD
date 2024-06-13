@@ -13,8 +13,6 @@ class MyDataset(Dataset):
         self.visual_features_dir = os.path.join(self.directory, data_config['img'])
         self.labels_dir = os.path.join(self.directory, data_config['label'])
 
-        self.visual_feature_files = sorted(os.listdir(self.visual_features_dir))
-        self.label_files = sorted(os.listdir(self.labels_dir))
     
     def __len__(self):
         return len(self.visual_feature_files)
