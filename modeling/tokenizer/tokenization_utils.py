@@ -26,7 +26,7 @@ from contextlib import contextmanager
 
 from tokenizers.implementations import BaseTokenizer
 
-from gpt_model.file_utils import cached_path, hf_bucket_url, is_remote_url, is_tf_available, is_torch_available
+from modeling.gpt_model.file_utils import cached_path, hf_bucket_url, is_remote_url, is_tf_available, is_torch_available
 
 if is_torch_available():
     import torch
