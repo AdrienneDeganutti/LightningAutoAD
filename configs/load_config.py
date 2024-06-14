@@ -20,5 +20,7 @@ def get_custom_args():
     args.max_seq_length = config['max_seq_length']
     args.scheduler = config['scheduler']
     args.adam_epsilon = config['adam_epsilon']
+    args.max_num_frames = config['max_num_frames']
+    args.seed = config['seed']
 
     return args
