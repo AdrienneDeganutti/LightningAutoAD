@@ -7,7 +7,7 @@ Designed for short video captioning.
 
 import torch
 from torch import nn
-from typing import Tuple, List, Union, Optional
+from typing import Optional
 from collections import OrderedDict
 from torch.nn import LayerNorm
 from einops import rearrange
