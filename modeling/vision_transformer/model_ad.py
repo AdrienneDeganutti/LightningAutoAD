@@ -70,4 +70,9 @@ class VideoCaptionModel(nn.Module):
         latent_vector = self.perceiver(visual_feature)
         prefix_vector = self.project(latent_vector)
 
-        return prefix_vector
+        # Token shift workaround:
+        device = prefix_vector.device
+        add = -100 * torch.ones(prefix_vector.shape[0], 1, prefix_vector.shape[2]).to(device)  # Shape [batch_size, 1, feature_size]
+        workaround_prefix_vector = torch.cat([add, prefix_vector], dim=1)
+
+        return workaround_prefix_vector

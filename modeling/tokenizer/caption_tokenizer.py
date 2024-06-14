@@ -27,9 +27,8 @@ class TokenizerHandler:
         add = prepend_token * torch.ones((tokenized_captions['input_ids'].size(0), 1), dtype=torch.long)
         tokenized_captions = torch.cat([add, tokenized_captions['input_ids']], dim=1)
 
-        proc_tokens = tokenized_captions.to(args.device)
-
-        return proc_tokens
+        return tokenized_captions
+        #return tokenized_captions['input_ids']
 
 
     def tokenize_caption_for_eval(self, args, caption):
