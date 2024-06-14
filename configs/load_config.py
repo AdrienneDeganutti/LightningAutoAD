@@ -3,16 +3,21 @@ import json
 
 def get_custom_args():
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--config', type=str, required=True)
-    args = parser.parse_args()
+    config_file = "configs/8frames_default.json"
 
-    with open(args.config, 'r') as f:
+    with open(config_file, 'r') as f:
         config = json.load(f)
+
+    # Create a simple namespace object to store config values
+    class Args:
+        pass
+
+    args = Args()
 
     args.train_yaml = config['train_yaml']
     args.val_yaml = config['val_yaml']
     args.test_yaml = config['test_yaml']
+    args.num_devices = config['num_devices']
     args.batch_size = config['per_gpu_batch_size']
     args.max_epochs = config['num_train_epochs']
     args.learning_rate = config['learning_rate']
