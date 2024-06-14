@@ -1,5 +1,7 @@
 # Logging Files
 lightning_logs/
+output/
+wandb/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
