@@ -1,5 +1,5 @@
 import os
-import json
+import csv
 import torch
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
@@ -13,7 +13,8 @@ class MyLightningModule(pl.LightningModule):
         self.gpt = gpt_model
         self.tokenizer = tokenizer
         self.scorer = scorer
-        self.val_predictions = []
+        self.validation_step_outputs = []
+        self.train_step_outputs = []
         
     
     def forward(self, caption, visual_frame):
@@ -21,44 +22,80 @@ class MyLightningModule(pl.LightningModule):
         prefix_vector = self.transformer(visual_frame)
         gpt_output = self.gpt(inputs_embeds=prefix_vector, labels=tokenized_caption)
         loss, logits = gpt_output[:2]
+
         return loss, logits
     
     def training_step(self, batch, batch_idx):
         img_ID, caption, visual_frame = batch
-
         loss, logits = self.forward(caption, visual_frame)
 
-        batch_acc, predictions = self.scorer.compute_score(img_ID, logits, caption)
-        batch_acc_tensor = torch.tensor(batch_acc, device=self.device, dtype=torch.float32)  # Convert to tensor
+        # Decode prediction:
+        token_predictions = torch.argmax(logits, dim=-1)
+        train_predictions = [self.tokenizer.tokenizer.decode(g, skip_special_tokens=True) for g in token_predictions]
 
         self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
-        self.log('train_cider', batch_acc_tensor, on_step=True, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
+
+        for i in range (len(img_ID)):
+            self.train_step_outputs.append({
+                'img_ID': img_ID[i],
+                'prediction': train_predictions[i]})
 
         return loss
     
+
     def validation_step(self, batch, batch_idx):
         img_ID, caption, visual_frame = batch
         loss, logits = self.forward(caption, visual_frame)
 
-        batch_acc, predictions = self.scorer.compute_score(img_ID, logits, caption)
-        batch_acc_tensor = torch.tensor(batch_acc, device=self.device, dtype=torch.float32)  # Convert to tensor
+        # Decode prediction:
+        token_predictions = torch.argmax(logits, dim=-1)
+        val_predictions = [self.tokenizer.tokenizer.decode(g, skip_special_tokens=True) for g in token_predictions]
 
         self.log('val_loss', loss, on_step=False, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
-        self.log('val_cider', batch_acc_tensor, on_step=False, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
 
         for i in range (len(img_ID)):
-            self.val_predictions.append({
+            self.validation_step_outputs.append({
                 'img_ID': img_ID[i],
-                'prediction': predictions[img_ID[i]]})
+                'prediction': val_predictions[i]})
         
-        return loss
+        return self.validation_step_outputs
     
+
+    def on_train_epoch_end(self):
+        epoch = self.current_epoch
+
+        os.makedirs('output/train-predictions', exist_ok=True)
+        output_file_path = f'output/train-predictions/epoch-{epoch}.tsv'
+
+        # Write the val_predictions to a TSV file
+        with open(output_file_path, 'w', newline='') as f:
+            writer = csv.writer(f, delimiter='\t')
+            writer.writerow(['img_ID', 'prediction'])
+
+            for prediction in self.train_step_outputs:
+                amended_prediction = prediction['prediction'].replace('\n', '\\n')
+                writer.writerow([prediction['img_ID'], amended_prediction])
+    
+        self.train_step_outputs = []  # Clear for the next epoch
+        return super().on_train_epoch_end()
+    
+
     def on_validation_epoch_end(self):
         epoch = self.current_epoch
 
-        with open(f'output/val_results_epoch_{epoch}.json', 'w') as f:
-            json.dump(self.val_predictions, f, indent=4)
-        self.val_predictions = []   #Clear for the next epoch
+        os.makedirs('output/validation-predictions', exist_ok=True)
+        output_file_path = f'output/validation-predictions/epoch-{epoch}.tsv'
+
+        # Write the val_predictions to a TSV file
+        with open(output_file_path, 'w', newline='') as f:
+            writer = csv.writer(f, delimiter='\t')
+            writer.writerow(['img_ID', 'prediction'])
+
+            for prediction in self.validation_step_outputs:
+                amended_prediction = prediction['prediction'].replace('\n', '\\n')
+                writer.writerow([prediction['img_ID'], amended_prediction])
+    
+        self.validation_step_outputs = []  # Clear for the next epoch
 
     
     def configure_optimizers(self):
