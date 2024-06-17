@@ -1,5 +1,5 @@
 import os
-import csv
+import json
 import torch
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
@@ -67,16 +67,27 @@ class MyLightningModule(pl.LightningModule):
         os.makedirs('output/train-predictions', exist_ok=True)
         output_file_path = f'output/train-predictions/epoch-{epoch}.tsv'
 
-        # Write the val_predictions to a TSV file
-        with open(output_file_path, 'w', newline='') as f:
-            writer = csv.writer(f, delimiter='\t')
-            writer.writerow(['img_ID', 'prediction'])
+        # Prepare the val_predictions for JSON saving
+        json_predictions = []
+        for prediction in self.train_step_outputs:
+            amended_prediction = prediction['prediction'].replace('\n', '\\n')  # Escape newline characters
+            json_predictions.append({
+                'image_id': prediction['img_ID'],
+                'caption': amended_prediction
+            })
 
-            for prediction in self.train_step_outputs:
-                amended_prediction = prediction['prediction'].replace('\n', '\\n')
-                writer.writerow([prediction['img_ID'], amended_prediction])
+        # Write the val_predictions to a JSON file
+        with open(output_file_path, 'w') as f:
+            json.dump(json_predictions, f, indent=4)
     
-        self.train_step_outputs = []  # Clear for the next epoch
+        self.train_step_outputs = [] 
+
+        results = self.scorer.compute_score(self.args.train_gt_labels, output_file_path)
+
+        output_results_path = f'output/train-predictions/epoch-{epoch}-metrics.json'
+        with open(output_results_path, 'w') as fp:
+            json.dump(results, fp, indent=4)
+
         return super().on_train_epoch_end()
     
 
@@ -84,18 +95,28 @@ class MyLightningModule(pl.LightningModule):
         epoch = self.current_epoch
 
         os.makedirs('output/validation-predictions', exist_ok=True)
-        output_file_path = f'output/validation-predictions/epoch-{epoch}.tsv'
+        output_file_path = f'output/validation-predictions/epoch-{epoch}.json'
 
-        # Write the val_predictions to a TSV file
-        with open(output_file_path, 'w', newline='') as f:
-            writer = csv.writer(f, delimiter='\t')
-            writer.writerow(['img_ID', 'prediction'])
+        # Prepare the val_predictions for JSON saving
+        json_predictions = []
+        for prediction in self.validation_step_outputs:
+            amended_prediction = prediction['prediction'].replace('\n', '\\n')  # Escape newline characters
+            json_predictions.append({
+                'image_id': prediction['img_ID'],
+                'caption': amended_prediction
+            })
 
-            for prediction in self.validation_step_outputs:
-                amended_prediction = prediction['prediction'].replace('\n', '\\n')
-                writer.writerow([prediction['img_ID'], amended_prediction])
+        # Write the val_predictions to a JSON file
+        with open(output_file_path, 'w') as f:
+            json.dump(json_predictions, f, indent=4)
     
-        self.validation_step_outputs = []  # Clear for the next epoch
+        self.validation_step_outputs = [] 
+
+        results = self.scorer.compute_score(self.args.val_gt_labels, output_file_path)
+
+        output_results_path = f'output/validation-predictions/epoch-{epoch}-metrics.json'
+        with open(output_results_path, 'w') as fp:
+            json.dump(results, fp, indent=4)
 
     
     def configure_optimizers(self):
