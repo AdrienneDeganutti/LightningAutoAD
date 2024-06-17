@@ -3,6 +3,7 @@ lightning_logs/
 output/
 wandb/
 Lightning-AutoAD/
+evalcap/coco_caption/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
