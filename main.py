@@ -32,6 +32,7 @@ def main(args):
         accelerator='gpu',
         devices=args.num_devices,
         strategy=DDPStrategy(find_unused_parameters=True),
+        use_distributed_sampler = False,        #Stops the train_dataset from shuffling
         max_epochs=args.max_epochs,
         logger=wandb_logger
     )
