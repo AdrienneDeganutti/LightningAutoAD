@@ -1,22 +1,23 @@
-import torch
-from pycocoevalcap.cider.cider import Cider
+import json
+from .coco_caption.pycocotools.coco import COCO
+from .coco_caption.pycocoevalcap.eval import COCOEvalCap
 
 class EvaluateCaption():
     def __init__(self, args, tokenizer):
         self.args = args
         self.tokenizer = tokenizer
-        self.cider_scorer = Cider()
 
-    def compute_score(self, img_ID, logits, GT_caption):
+    def compute_score(self, pred_file_path, output_file_path):
 
-        token_predictions = torch.argmax(logits, dim=-1)
-        predictions = [self.tokenizer.tokenizer.decode(g, skip_special_tokens=True) for g in token_predictions]
+        coco = COCO(pred_file_path)
+        cocoRes = coco.loadRes(output_file_path)
+        cocoEval = COCOEvalCap(coco, cocoRes)
 
-        # Prepare references and candidates for CIDEr computation
-        ground_truth = {img_ID[i]: [GT_caption[i]] for i in range(len(img_ID))}
-        candidates = {img_ID[i]: [predictions[i]] for i in range(len(img_ID))}
+        cocoEval.params['image_id'] = cocoRes.getImgIds()
 
-        # Compute CIDEr score
-        cider_score, _ = self.cider_scorer.compute_score(ground_truth, candidates)
+        cocoEval.evaluate()
+        results = cocoEval.eval
+
+        return results
     
-        return cider_score
+        
