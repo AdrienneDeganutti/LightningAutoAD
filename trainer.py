@@ -1,9 +1,11 @@
+import os
+import json
 import torch
-import torch.nn as nn
 from torch.optim import AdamW
+from torch.optim.lr_scheduler import CosineAnnealingLR
 import pytorch_lightning as pl
 
-class LightningModule(pl.LightningModule):
+class MyLightningModule(pl.LightningModule):
     def __init__(self, args, transformer_model, gpt_model, tokenizer, scorer):
         super().__init__()
         self.args = args
@@ -11,9 +13,11 @@ class LightningModule(pl.LightningModule):
         self.gpt = gpt_model
         self.tokenizer = tokenizer
         self.scorer = scorer
+        self.val_predictions = []
         
     
-    def forward(self, tokenized_caption, visual_frame):
+    def forward(self, caption, visual_frame):
+        tokenized_caption = self.tokenizer.tokenize_caption(self.args, caption).to(self.device)
         prefix_vector = self.transformer(visual_frame)
         gpt_output = self.gpt(inputs_embeds=prefix_vector, labels=tokenized_caption)
         loss, logits = gpt_output[:2]
@@ -21,33 +25,41 @@ class LightningModule(pl.LightningModule):
     
     def training_step(self, batch, batch_idx):
         img_ID, caption, visual_frame = batch
-        
-        tokenized_caption = self.tokenizer.tokenize_caption(self.args, caption)
 
-        loss, logits = self.forward(tokenized_caption, visual_frame)
+        loss, logits = self.forward(caption, visual_frame)
 
-        batch_score = compute_score_with_logits(logits, tokenized_caption)
-        batch_acc = torch.mean(batch_score.float())
+        batch_acc, predictions = self.scorer.compute_score(img_ID, logits, caption)
+        batch_acc_tensor = torch.tensor(batch_acc, device=self.device, dtype=torch.float32)  # Convert to tensor
 
-        loss_dict = {'loss': float(loss), 'acc': float(batch_acc)}
-
-        self.log_dict(loss_dict)
+        self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
+        self.log('train_cider', batch_acc_tensor, on_step=True, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
 
         return loss
     
     def validation_step(self, batch, batch_idx):
         img_ID, caption, visual_frame = batch
-        #tokenized_caption = self.tokenizer.tokenize_caption(self.args, caption)
+        loss, logits = self.forward(caption, visual_frame)
 
-        prefix_vector = self.transformer(visual_frame)
-        outputs = self.gpt(inputs_embeds=prefix_vector, )      #No caption given for validation
-        logits = outputs[0]
+        batch_acc, predictions = self.scorer.compute_score(img_ID, logits, caption)
+        batch_acc_tensor = torch.tensor(batch_acc, device=self.device, dtype=torch.float32)  # Convert to tensor
 
-        batch_acc = self.scorer.compute_score(img_ID, logits, caption)
+        self.log('val_loss', loss, on_step=False, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
+        self.log('val_cider', batch_acc_tensor, on_step=False, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
 
-        self.log('validation_cider', batch_acc)
+        for i in range (len(img_ID)):
+            self.val_predictions.append({
+                'img_ID': img_ID[i],
+                'prediction': predictions[img_ID[i]]})
         
-        return batch_acc
+        return loss
+    
+    def on_validation_epoch_end(self):
+        epoch = self.current_epoch
+
+        with open(f'output/val_results_epoch_{epoch}.json', 'w') as f:
+            json.dump(self.val_predictions, f, indent=4)
+        self.val_predictions = []   #Clear for the next epoch
+
     
     def configure_optimizers(self):
         #Combine parameters and initialize optimizer
