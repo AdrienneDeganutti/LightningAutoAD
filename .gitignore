@@ -2,6 +2,7 @@
 lightning_logs/
 output/
 wandb/
+Lightning-AutoAD/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
