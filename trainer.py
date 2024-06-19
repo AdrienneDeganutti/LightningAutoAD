@@ -65,7 +65,7 @@ class MyLightningModule(pl.LightningModule):
         epoch = self.current_epoch
 
         os.makedirs('output/train-predictions', exist_ok=True)
-        output_file_path = f'output/train-predictions/epoch-{epoch}.tsv'
+        output_file_path = f'output/train-predictions/epoch-{epoch}.json'
 
         # Prepare the val_predictions for JSON saving
         json_predictions = []
@@ -82,7 +82,7 @@ class MyLightningModule(pl.LightningModule):
     
         self.train_step_outputs = [] 
 
-        results = self.scorer.compute_score(self.args.train_gt_labels, output_file_path)
+        results = self.scorer.compute_epoch_score(self.args.train_gt_labels, output_file_path)
 
         output_results_path = f'output/train-predictions/epoch-{epoch}-metrics.json'
         with open(output_results_path, 'w') as fp:
@@ -112,11 +112,11 @@ class MyLightningModule(pl.LightningModule):
     
         self.validation_step_outputs = [] 
 
-        results = self.scorer.compute_score(self.args.val_gt_labels, output_file_path)
+        epoch_results = self.scorer.compute_epoch_score(self.args.val_gt_labels, output_file_path)
 
         output_results_path = f'output/validation-predictions/epoch-{epoch}-metrics.json'
         with open(output_results_path, 'w') as fp:
-            json.dump(results, fp, indent=4)
+            json.dump(epoch_results, fp, indent=4)
 
     
     def configure_optimizers(self):
