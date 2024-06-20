@@ -65,7 +65,7 @@ class MyLightningModule(pl.LightningModule):
         epoch = self.current_epoch
 
         os.makedirs('output/train-predictions', exist_ok=True)
-        output_file_path = f'output/train-predictions/epoch-{epoch}.json'
+        output_file_path = f'output/train-predictions/epoch-{epoch}-predictions.json'
 
         # Prepare the val_predictions for JSON saving
         json_predictions = []
@@ -82,11 +82,12 @@ class MyLightningModule(pl.LightningModule):
     
         self.train_step_outputs = [] 
 
-        results = self.scorer.compute_epoch_score(self.args.train_gt_labels, output_file_path)
+        epoch_results = self.scorer.compute_epoch_score(self.args.train_gt_labels, output_file_path)
+        self.log('train_accuracy', epoch_results['CIDEr'], on_step=False, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
 
-        output_results_path = f'output/train-predictions/epoch-{epoch}-metrics.json'
+        output_results_path = f'output/train-predictions/epoch-{epoch}-epoch-metrics.json'
         with open(output_results_path, 'w') as fp:
-            json.dump(results, fp, indent=4)
+            json.dump(epoch_results, fp, indent=4)
 
         return super().on_train_epoch_end()
     
@@ -95,7 +96,7 @@ class MyLightningModule(pl.LightningModule):
         epoch = self.current_epoch
 
         os.makedirs('output/validation-predictions', exist_ok=True)
-        output_file_path = f'output/validation-predictions/epoch-{epoch}.json'
+        output_file_path = f'output/validation-predictions/epoch-{epoch}-predictions.json'
 
         # Prepare the val_predictions for JSON saving
         json_predictions = []
@@ -113,8 +114,9 @@ class MyLightningModule(pl.LightningModule):
         self.validation_step_outputs = [] 
 
         epoch_results = self.scorer.compute_epoch_score(self.args.val_gt_labels, output_file_path)
+        self.log('val_accuracy', epoch_results['CIDEr'], on_step=False, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
 
-        output_results_path = f'output/validation-predictions/epoch-{epoch}-metrics.json'
+        output_results_path = f'output/validation-predictions/epoch-{epoch}-epoch-metrics.json'
         with open(output_results_path, 'w') as fp:
             json.dump(epoch_results, fp, indent=4)
 
