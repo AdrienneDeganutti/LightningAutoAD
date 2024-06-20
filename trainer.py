@@ -4,6 +4,8 @@ import torch
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
 import pytorch_lightning as pl
+from pytorch_lightning.utilities.rank_zero import rank_zero_only
+
 
 class MyLightningModule(pl.LightningModule):
     def __init__(self, args, transformer_model, gpt_model, tokenizer, scorer):
@@ -64,30 +66,34 @@ class MyLightningModule(pl.LightningModule):
     def on_train_epoch_end(self):
         epoch = self.current_epoch
 
-        os.makedirs('output/train-predictions', exist_ok=True)
-        output_file_path = f'output/train-predictions/epoch-{epoch}-predictions.json'
+        @rank_zero_only
+        def save_train_predictions():
+            os.makedirs('output/train-predictions/epoch-{epoch}', exist_ok=True)
+            output_file_path = f'output/train-predictions/epoch-{epoch}/epoch-{epoch}-predictions.json'
 
-        # Prepare the val_predictions for JSON saving
-        json_predictions = []
-        for prediction in self.train_step_outputs:
-            amended_prediction = prediction['prediction'].replace('\n', '\\n')  # Escape newline characters
-            json_predictions.append({
-                'image_id': prediction['img_ID'],
-                'caption': amended_prediction
-            })
+            # Prepare the train_predictions for JSON saving
+            json_predictions = []
+            for prediction in self.train_step_outputs:
+                amended_prediction = prediction['prediction'].replace('\n', '\\n')  # Escape newline characters
+                json_predictions.append({
+                    'image_id': prediction['img_ID'],
+                    'caption': amended_prediction
+                })
 
-        # Write the val_predictions to a JSON file
-        with open(output_file_path, 'w') as f:
-            json.dump(json_predictions, f, indent=4)
-    
+            # Write the val_predictions to a JSON file
+            with open(output_file_path, 'w') as f:
+                json.dump(json_predictions, f, indent=4)
+            
+            epoch_results = self.scorer.compute_epoch_score(self.args.train_gt_labels, output_file_path)
+            self.log('train_accuracy', epoch_results['CIDEr'], on_step=False, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
+
+            return epoch_results
+        
+        epoch_results = save_train_predictions()
         self.train_step_outputs = [] 
 
-        epoch_results = self.scorer.compute_epoch_score(self.args.train_gt_labels, output_file_path)
-        self.log('train_accuracy', epoch_results['CIDEr'], on_step=False, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
-
-        output_results_path = f'output/train-predictions/epoch-{epoch}-epoch-metrics.json'
-        with open(output_results_path, 'w') as fp:
-            json.dump(epoch_results, fp, indent=4)
+        if torch.distributed.is_initialized():
+            torch.distributed.barrier()  # Synchronize all processes after saving
 
         return super().on_train_epoch_end()
     
@@ -95,30 +101,36 @@ class MyLightningModule(pl.LightningModule):
     def on_validation_epoch_end(self):
         epoch = self.current_epoch
 
-        os.makedirs('output/validation-predictions', exist_ok=True)
-        output_file_path = f'output/validation-predictions/epoch-{epoch}-predictions.json'
+        @rank_zero_only
+        def save_val_predictions():
+            os.makedirs('output/validation-predictions/epoch-{epoch}', exist_ok=True)
+            output_file_path = f'output/validation-predictions/epoch-{epoch}/epoch-{epoch}-predictions.json'
 
-        # Prepare the val_predictions for JSON saving
-        json_predictions = []
-        for prediction in self.validation_step_outputs:
-            amended_prediction = prediction['prediction'].replace('\n', '\\n')  # Escape newline characters
-            json_predictions.append({
-                'image_id': prediction['img_ID'],
-                'caption': amended_prediction
-            })
+            # Prepare the val_predictions for JSON saving
+            json_predictions = []
+            for prediction in self.validation_step_outputs:
+                amended_prediction = prediction['prediction'].replace('\n', '\\n')  # Escape newline characters
+                json_predictions.append({
+                    'image_id': prediction['img_ID'],
+                    'caption': amended_prediction
+                })
 
-        # Write the val_predictions to a JSON file
-        with open(output_file_path, 'w') as f:
-            json.dump(json_predictions, f, indent=4)
-    
+            # Write the val_predictions to a JSON file
+            with open(output_file_path, 'w') as f:
+                json.dump(json_predictions, f, indent=4)
+            
+            epoch_results = self.scorer.compute_epoch_score(self.args.val_gt_labels, output_file_path, epoch)
+            self.log('val_accuracy', epoch_results['CIDEr'], on_step=False, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
+            
+            return epoch_results
+
+        epoch_results = save_val_predictions()
         self.validation_step_outputs = [] 
 
-        epoch_results = self.scorer.compute_epoch_score(self.args.val_gt_labels, output_file_path)
-        self.log('val_accuracy', epoch_results['CIDEr'], on_step=False, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
+        if torch.distributed.is_initialized():
+            torch.distributed.barrier()  # Synchronize all processes after saving
 
-        output_results_path = f'output/validation-predictions/epoch-{epoch}-epoch-metrics.json'
-        with open(output_results_path, 'w') as fp:
-            json.dump(epoch_results, fp, indent=4)
+        return super().on_validation_epoch_end()
 
     
     def configure_optimizers(self):

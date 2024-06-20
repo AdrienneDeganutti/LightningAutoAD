@@ -1,6 +1,7 @@
 import json
 from .coco_caption.pycocotools.coco import COCO
 from .coco_caption.pycocoevalcap.eval import COCOEvalCap
+from pytorch_lightning.utilities.rank_zero import rank_zero_only
 
 class EvaluateCaption():
     def __init__(self, args, tokenizer):
@@ -9,7 +10,8 @@ class EvaluateCaption():
         self.caption_results = {}
 
 
-    def compute_epoch_score(self, pred_file_path, output_file_path):
+    @rank_zero_only
+    def compute_epoch_score(self, pred_file_path, output_file_path, epoch):
         print('\nBeginning Epoch-level evaluation...\n')
 
         coco = COCO(pred_file_path)
@@ -43,11 +45,16 @@ class EvaluateCaption():
             print('\nCaption-level Evaluation complete!')
 
             self.append_caption_scores_to_predictions(output_file_path)
+        
+        output_results_path = f'output/{split}-predictions/epoch-{epoch}/epoch-{epoch}-epoch-metrics.json'
+        with open(output_results_path, 'w') as fp:
+            json.dump(epoch_results, fp, indent=4)
 
         
         return epoch_results
     
 
+    @rank_zero_only
     def append_caption_scores_to_predictions(self, pred_file_path):
         # Load the predictions
         with open(pred_file_path, 'r') as f:
