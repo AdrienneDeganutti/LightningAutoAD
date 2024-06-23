@@ -1,11 +1,10 @@
 import os
 import json
 import torch
+import torch.distributed as dist
 from torch.optim import AdamW
-from torch.optim.lr_scheduler import CosineAnnealingLR
 import pytorch_lightning as pl
 from pytorch_lightning.utilities.rank_zero import rank_zero_only
-
 
 class MyLightningModule(pl.LightningModule):
     def __init__(self, args, transformer_model, gpt_model, tokenizer, scorer):
@@ -17,16 +16,14 @@ class MyLightningModule(pl.LightningModule):
         self.scorer = scorer
         self.validation_step_outputs = []
         self.train_step_outputs = []
-        
-    
+
     def forward(self, caption, visual_frame):
         tokenized_caption = self.tokenizer.tokenize_caption(self.args, caption).to(self.device)
         prefix_vector = self.transformer(visual_frame)
         gpt_output = self.gpt(inputs_embeds=prefix_vector, labels=tokenized_caption)
         loss, logits = gpt_output[:2]
-
         return loss, logits
-    
+
     def training_step(self, batch, batch_idx):
         img_ID, caption, visual_frame = batch
         loss, logits = self.forward(caption, visual_frame)
@@ -37,13 +34,13 @@ class MyLightningModule(pl.LightningModule):
 
         self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
 
-        for i in range (len(img_ID)):
+        for i in range(len(img_ID)):
             self.train_step_outputs.append({
                 'img_ID': img_ID[i],
-                'prediction': train_predictions[i]})
+                'prediction': train_predictions[i]
+            })
 
         return loss
-    
 
     def validation_step(self, batch, batch_idx):
         img_ID, caption, visual_frame = batch
@@ -55,85 +52,85 @@ class MyLightningModule(pl.LightningModule):
 
         self.log('val_loss', loss, on_step=False, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
 
-        for i in range (len(img_ID)):
+        for i in range(len(img_ID)):
             self.validation_step_outputs.append({
                 'img_ID': img_ID[i],
-                'prediction': val_predictions[i]})
-        
+                'prediction': val_predictions[i]
+            })
+
         return self.validation_step_outputs
-    
 
     def on_train_epoch_end(self):
         epoch = self.current_epoch
 
-        @rank_zero_only
-        def save_train_predictions():
-            os.makedirs('output/train-predictions/epoch-{epoch}', exist_ok=True)
-            output_file_path = f'output/train-predictions/epoch-{epoch}/epoch-{epoch}-predictions.json'
-
-            # Prepare the train_predictions for JSON saving
-            json_predictions = []
-            for prediction in self.train_step_outputs:
-                amended_prediction = prediction['prediction'].replace('\n', '\\n')  # Escape newline characters
-                json_predictions.append({
-                    'image_id': prediction['img_ID'],
-                    'caption': amended_prediction
-                })
-
-            # Write the val_predictions to a JSON file
-            with open(output_file_path, 'w') as f:
-                json.dump(json_predictions, f, indent=4)
-            
-            epoch_results = self.scorer.compute_epoch_score(self.args.train_gt_labels, output_file_path)
-            self.log('train_accuracy', epoch_results['CIDEr'], on_step=False, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
-
-            return epoch_results
+        # Gather predictions from all processes
+        all_outputs = self.gather_predictions(self.train_step_outputs)
         
-        epoch_results = save_train_predictions()
-        self.train_step_outputs = [] 
+        if torch.distributed.get_rank == 0:
+            self.save_predictions(all_outputs, f'output/train-predictions/epoch-{epoch}', epoch, 'train')
+        
+        torch.distributed.barrier()
 
-        if torch.distributed.is_initialized():
-            torch.distributed.barrier()  # Synchronize all processes after saving
+        # Compute epoch results
+        output_file_path = f'output/train-predictions/epoch-{epoch}/epoch-{epoch}-predictions.json'
+        epoch_results = self.scorer.compute_epoch_score(self.args.train_gt_labels, output_file_path, epoch)
+        self.log('train_accuracy', epoch_results['CIDEr'], on_step=False, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
 
-        return super().on_train_epoch_end()
-    
+        # Clear outputs
+        self.train_step_outputs = []
 
     def on_validation_epoch_end(self):
         epoch = self.current_epoch
 
-        @rank_zero_only
-        def save_val_predictions():
-            os.makedirs('output/validation-predictions/epoch-{epoch}', exist_ok=True)
-            output_file_path = f'output/validation-predictions/epoch-{epoch}/epoch-{epoch}-predictions.json'
+        # Gather predictions from all processes
+        all_outputs = self.gather_predictions(self.validation_step_outputs)
+        
+        if torch.distributed.get_rank == 0:
+            self.save_predictions(all_outputs, f'output/validation-predictions/epoch-{epoch}', epoch, 'validation')
+        
+        torch.distributed.barrier()
 
-            # Prepare the val_predictions for JSON saving
-            json_predictions = []
-            for prediction in self.validation_step_outputs:
-                amended_prediction = prediction['prediction'].replace('\n', '\\n')  # Escape newline characters
-                json_predictions.append({
-                    'image_id': prediction['img_ID'],
-                    'caption': amended_prediction
-                })
+        # Compute epoch results
+        output_file_path = f'output/validation-predictions/epoch-{epoch}/epoch-{epoch}-predictions.json'
+        epoch_results = self.scorer.compute_epoch_score(self.args.val_gt_labels, output_file_path, epoch)
+        self.log('val_accuracy', epoch_results['CIDEr'], on_step=False, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
 
-            # Write the val_predictions to a JSON file
-            with open(output_file_path, 'w') as f:
-                json.dump(json_predictions, f, indent=4)
-            
-            epoch_results = self.scorer.compute_epoch_score(self.args.val_gt_labels, output_file_path, epoch)
-            self.log('val_accuracy', epoch_results['CIDEr'], on_step=False, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
-            
-            return epoch_results
+        # Clear outputs
+        self.validation_step_outputs = []
 
-        epoch_results = save_val_predictions()
-        self.validation_step_outputs = [] 
 
-        if torch.distributed.is_initialized():
-            torch.distributed.barrier()  # Synchronize all processes after saving
+    def save_predictions(self, outputs, output_dir, epoch, split):
+        os.makedirs(output_dir, exist_ok=True)
+        output_file_path = f'{output_dir}/epoch-{epoch}-predictions.json'
 
-        return super().on_validation_epoch_end()
+        # Prepare the predictions for JSON saving
+        json_predictions = []
+        for prediction in outputs:
+            amended_prediction = prediction['prediction'].replace('\n', '\\n')  # Escape newline characters
+            json_predictions.append({
+                'image_id': prediction['img_ID'],
+                'caption': amended_prediction
+            })
 
+        # Write the predictions to a JSON file
+        with open(output_file_path, 'w') as f:  # Use 'w' mode for atomic writes
+            json.dump(json_predictions, f, indent=4)
+
+        return output_file_path
     
+    def gather_predictions(self, outputs):
+        if not dist.is_available() or not dist.is_initialized():
+            return outputs
+
+        world_size = dist.get_world_size()
+        gathered_outputs = [None for _ in range(world_size)]
+        dist.all_gather_object(gathered_outputs, outputs)
+
+        # Flatten the list of lists
+        all_outputs = [item for sublist in gathered_outputs for item in sublist]
+        return all_outputs
+
     def configure_optimizers(self):
-        #Combine parameters and initialize optimizer
         combined_parameters = list(self.transformer.parameters()) + list(self.gpt.parameters())
-        return AdamW(combined_parameters, lr=self.args.learning_rate, eps=self.args.adam_epsilon)
+        optimizer = AdamW(combined_parameters, lr=self.args.learning_rate, eps=self.args.adam_epsilon)
+        return optimizer
