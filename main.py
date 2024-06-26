@@ -17,24 +17,24 @@ def main(args):
     #torch.manual_seed(args.seed)
     #seed_everything(args.seed)
 
-    #wandb_logger = WandbLogger(project="Lightning-AutoAD")
+    wandb_logger = WandbLogger(project="Lightning-AutoAD")
 
     tokenizer = TokenizerHandler()
     transformer_model = VideoCaptionModel(num_latents=args.max_seq_length)
     gpt_model = GPT2LMHeadModel.from_pretrained("gpt2")
     scorer = EvaluateCaption(args, tokenizer)
-    model = MyLightningModule(args, transformer_model, gpt_model, tokenizer, scorer)
 
     data_module = MyDataModule(args)
+
+    model = MyLightningModule(args, transformer_model, gpt_model, tokenizer, scorer)
 
     trainer = Trainer(
         accelerator='gpu',
         devices=args.num_devices,
         strategy=DDPStrategy(find_unused_parameters=True),
-        #use_distributed_sampler = False,        #Stops the train_dataset from shuffling
+        use_distributed_sampler = False,        #Stops the train_dataset from shuffling
         max_epochs=args.max_epochs,
-        num_sanity_val_steps=0
-        #logger=wandb_logger
+        logger=wandb_logger
     )
 
     trainer.fit(model, data_module)
